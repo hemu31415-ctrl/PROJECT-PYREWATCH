@@ -1,4 +1,5 @@
 export const API_BASE_URL =
+  process.env.REACT_APP_API_BASE_URL ||
   "https://backend1-3-zb2a.onrender.com";
 
 // Get JWT token for protected API requests

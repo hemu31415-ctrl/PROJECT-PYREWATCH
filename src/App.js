@@ -7,7 +7,7 @@ import ClassificationPage from "./components/ClassificationPage";
 import IgpsPage from "./components/IgpsPage";
 import IntelligenceMapPage from "./components/IntelligenceMapPage";
 
-import { getFirms } from "./api";
+import { getFirms, API_BASE_URL } from "./api";
 import { unlockAlarmAudio } from "./utils/alarm";
 
 const alerts = [
@@ -489,7 +489,7 @@ function App() {
       try {
         const response =
           await fetch(
-            "https://backend1-3-zb2a.onrender.com/health"
+            `${API_BASE_URL}/health`
           );
 
         if (!cancelled) {
