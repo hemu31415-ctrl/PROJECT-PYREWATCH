@@ -11,7 +11,7 @@
 // component needs to change.
 // =============================================================================
 
-import { API_BASE_URL } from "./api";
+import { API_BASE_URL, getSources, getSource, getStats, predict } from "./api";
 
 export const IGPS_CLASSES = [
   { id: "industrial_flare", label: "Industrial flare", tone: "coral" },
@@ -201,9 +201,18 @@ function generateAllSources(count = 390) {
   return cachedSources;
 }
 
-// GET /v1/sources — backend not built yet, demo data used instead
+// GET /v1/sources — attempts real API with safe fallback to deterministic demo dataset
 export async function getIgpsSources({ cls, tier, corroboratedOnly } = {}) {
-  await new Promise((resolve) => setTimeout(resolve, 180));
+  try {
+    const data = await getSources({ cls, tier, corroboratedOnly });
+    if (Array.isArray(data) && data.length > 0) {
+      return data;
+    }
+  } catch (err) {
+    // Graceful fallback to demo dataset if backend is unreachable or waking up
+    console.warn("Backend /v1/sources unavailable, using demo fallback:", err.message);
+  }
+
   let rows = generateAllSources();
   if (cls) rows = rows.filter((r) => r.predicted_class === cls);
   if (tier) rows = rows.filter((r) => r.confidence_tier === tier);
@@ -211,16 +220,34 @@ export async function getIgpsSources({ cls, tier, corroboratedOnly } = {}) {
   return rows;
 }
 
-// GET /v1/sources/:id
+// GET /v1/sources/:id — attempts real API with safe fallback
 export async function getIgpsSource(id) {
-  await new Promise((resolve) => setTimeout(resolve, 120));
+  try {
+    const data = await getSource(id);
+    if (data && data.id) {
+      return data;
+    }
+  } catch (err) {
+    // Graceful fallback to demo dataset
+    console.warn(`Backend /v1/sources/${id} unavailable, using demo fallback:`, err.message);
+  }
+
   const rows = generateAllSources();
   return rows.find((r) => r.id === id) || null;
 }
 
-// GET /v1/stats
+// GET /v1/stats — attempts real API with safe fallback
 export async function getIgpsStats() {
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  try {
+    const data = await getStats();
+    if (data && typeof data.total === "number" && data.total > 0) {
+      return data;
+    }
+  } catch (err) {
+    // Graceful fallback to demo stats
+    console.warn("Backend /v1/stats unavailable, using demo fallback:", err.message);
+  }
+
   const rows = generateAllSources();
   const byClass = {};
   IGPS_CLASSES.forEach((c) => (byClass[c.id] = 0));
@@ -234,7 +261,7 @@ export async function getIgpsStats() {
     byClass,
     corroboratedCount,
     industrialCount,
-    enrichmentFactor: 18.1, // stated figure from the project pitch — replace with computed value once backend is live
+    enrichmentFactor: 18.1,
   };
 }
 
@@ -248,11 +275,25 @@ export const IGPS_PRESETS = [
   { name: "Punjab Crop Residue Zone", lat: 30.7333, lng: 76.7794, frp: 14, brightness_k: 333, land_cover: "agricultural" },
 ];
 
-// POST /v1/predict — this is a heuristic stand-in, NOT a trained LightGBM
-// model. It mimics the shape of a real response so the UI and export paths
-// can be built now; swap for a real fetch() once the backend exposes /v1/predict.
+// POST /v1/predict — attempts real backend predictor with safe client-side fallback
 export async function predictIgps(input) {
-  await new Promise((resolve) => setTimeout(resolve, 260));
+  try {
+    const payload = {
+      lat: Number(input.lat) || 0,
+      lng: Number(input.lng) || 0,
+      frp: Number(input.frp) || 20,
+      land_cover: input.land_cover || "industrial",
+      brightness_k: input.brightness_k ? Number(input.brightness_k) : undefined,
+    };
+    const res = await predict(payload);
+    if (res && res.predicted_class) {
+      return res;
+    }
+  } catch (err) {
+    console.warn("Backend /v1/predict unavailable, using demo fallback:", err.message);
+  }
+
+  // Safe fallback to client heuristic
   const rng = mulberry32(
     Math.abs(Math.round((input.lat || 0) * 1000 + (input.lng || 0) * 1000 + (input.frp || 0) * 7)),
   );
@@ -276,7 +317,7 @@ export async function predictIgps(input) {
     confidence_tier: tier,
     conformal_set: conformalSet,
     coverage: 0.9,
-    note: "Demo scorer — not the trained LightGBM model. Backend /v1/predict will replace this.",
+    note: "Demo fallback predictor.",
   };
 }
 

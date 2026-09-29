@@ -7,7 +7,7 @@ import ClassificationPage from "./components/ClassificationPage";
 import IgpsPage from "./components/IgpsPage";
 import IntelligenceMapPage from "./components/IntelligenceMapPage";
 
-import { getFirms, API_BASE_URL } from "./api";
+import { getFirms, getSignals, API_BASE_URL } from "./api";
 import { unlockAlarmAudio } from "./utils/alarm";
 
 const alerts = [
@@ -526,8 +526,19 @@ function App() {
 
     async function loadFirms() {
       try {
-        const fires =
-          await getFirms();
+        let fires = [];
+        try {
+          const signals = await getSignals();
+          if (Array.isArray(signals) && signals.length > 0) {
+            fires = signals;
+          }
+        } catch (sigErr) {
+          // Fall back gracefully to FIRMS feed
+        }
+
+        if (!fires.length) {
+          fires = await getFirms();
+        }
 
         if (!cancelled) {
           setFirmsData(
