@@ -75,18 +75,26 @@ export const haversineKm = (lat1, lon1, lat2, lon2) => {
 // Returns candidate facilities ranked by proximity with association confidence (Spec §6.2)
 export const getCandidateFacilities = (lat, lng, maxCandidates = 3, maxRadiusKm = 25) => {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return [];
-  const list = INDUSTRIAL_FACILITIES.map((facility) => {
-    const distanceKm = haversineKm(lat, lng, facility.latitude, facility.longitude);
-    return {
-      facility,
-      distanceKm: Number(distanceKm.toFixed(2)),
-      // association confidence drops with distance
-      associationConfidence: Math.max(
-        0.1,
-        Number((Math.exp(-distanceKm / 5.5)).toFixed(2))
-      ),
-    };
+  // Quick bounding box: 25 km is ~0.23 degrees latitude/longitude
+  const degBox = maxRadiusKm / 110.0 + 0.05;
+  const list = INDUSTRIAL_FACILITIES.filter((facility) => {
+    return (
+      Math.abs(lat - facility.latitude) <= degBox &&
+      Math.abs(lng - facility.longitude) <= degBox
+    );
   })
+    .map((facility) => {
+      const distanceKm = haversineKm(lat, lng, facility.latitude, facility.longitude);
+      return {
+        facility,
+        distanceKm: Number(distanceKm.toFixed(2)),
+        // association confidence drops with distance
+        associationConfidence: Math.max(
+          0.1,
+          Number((Math.exp(-distanceKm / 5.5)).toFixed(2))
+        ),
+      };
+    })
     .filter((item) => item.distanceKm <= maxRadiusKm)
     .sort((a, b) => a.distanceKm - b.distanceKm)
     .slice(0, maxCandidates);
@@ -193,30 +201,41 @@ function inferClass(fire, nearest, candidates) {
   };
 }
 
-// ST-DBSCAN-like spatial clustering (Spec §8.1 Feature 1, radius 1.5 km)
+// High-performance spatial clustering (Spec §8.1 Feature 1, O(N) spatial grid index)
 export function clusterSignals(signals, radiusKm = 1.5) {
-  const clusters = [];
+  if (!Array.isArray(signals) || !signals.length) return [];
+  // 1.5 km corresponds to ~0.0135 degrees latitude
+  const gridDeg = radiusKm / 111.0;
+  const gridMap = new Map();
+
   signals.forEach((signal, index) => {
-    let cluster = clusters.find(
-      (c) =>
-        haversineKm(signal.latitude, signal.longitude, c.center.latitude, c.center.longitude) <= radiusKm
-    );
+    const lat = Number(signal.latitude);
+    const lng = Number(signal.longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    // Fast spatial cell key
+    const cellX = Math.round(lng / gridDeg);
+    const cellY = Math.round(lat / gridDeg);
+    const cellKey = `${cellX}_${cellY}`;
+
+    let cluster = gridMap.get(cellKey);
     if (!cluster) {
       cluster = {
-        id: `CL-${String(clusters.length + 1).padStart(3, "0")}`,
-        center: { latitude: signal.latitude, longitude: signal.longitude },
+        id: `CL-${String(gridMap.size + 1).padStart(3, "0")}`,
+        center: { latitude: lat, longitude: lng },
         members: [],
       };
-      clusters.push(cluster);
+      gridMap.set(cellKey, cluster);
     }
-    cluster.members.push(signal.id || `FIRMS-${index + 1}`);
+    const memberId = signal.id || `FIRMS-${index + 1}`;
+    cluster.members.push(memberId);
     const count = cluster.members.length;
-    cluster.center.latitude = (cluster.center.latitude * (count - 1) + signal.latitude) / count;
-    cluster.center.longitude = (cluster.center.longitude * (count - 1) + signal.longitude) / count;
+    cluster.center.latitude = (cluster.center.latitude * (count - 1) + lat) / count;
+    cluster.center.longitude = (cluster.center.longitude * (count - 1) + lng) / count;
   });
 
   const lookup = new Map();
-  clusters.forEach((cluster) =>
+  gridMap.forEach((cluster) =>
     cluster.members.forEach((id) =>
       lookup.set(id, { clusterId: cluster.id, clusterSize: cluster.members.length })
     )
