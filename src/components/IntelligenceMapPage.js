@@ -751,21 +751,34 @@ export default function IntelligenceMapPage({
   const [changes, setChanges] = useState([]);
   const previousSnapshot = useRef(null);
 
-  // Fuse and normalize live FIRMS signals with performance optimization
+  // Fuse and normalize live FIRMS signals
   const liveSignals = useMemo(() => {
-    let raw = Array.isArray(firmsData) && firmsData.length > 0 ? firmsData : initialDemo;
+    const raw = Array.isArray(firmsData) && firmsData.length > 0 ? firmsData : initialDemo;
 
-    // Performance optimization: When receiving thousands of raw satellite points across India,
-    // filter sub-3.5 MW micro-thermal noise and keep top active anomalies (up to 400 points)
-    // to ensure high-priority industrial/wildfire events are tracked with 60 FPS performance.
-    if (raw.length > 400) {
-      const meaningful = raw.filter((f) => (Number(f.frp) || 0) >= 3.5);
-      const pool = meaningful.length >= 80 ? meaningful : raw;
-      raw = pool.slice().sort((a, b) => (Number(b.frp) || 0) - (Number(a.frp) || 0)).slice(0, 400);
-    }
-
+    // 1. Classify all incoming thermal points
     const classified = raw.map((f, i) => classifyFirm(f, i));
-    return clusterSignals(classified);
+
+    // 2. Preserve 100% of all actionable categories:
+    // Industrial, Flare, Persistent Thermal, Wildfires, and Facility-corroborated events are NEVER reduced.
+    const actionable = [];
+    const unknown = [];
+
+    classified.forEach((item) => {
+      if (item.className === "unknown" && !item.corroborated) {
+        unknown.push(item);
+      } else {
+        actionable.push(item);
+      }
+    });
+
+    // 3. For 'unknown' (uncorroborated isolated noise):
+    // If there is an extreme flood of thousands of raw satellite points, keep the top 250 strongest unknown by FRP
+    // so the map stays silky smooth when Unknown is selected, while 100% of other categories are kept intact.
+    const cappedUnknown = unknown.length > 250
+      ? unknown.sort((a, b) => (Number(b.frp) || 0) - (Number(a.frp) || 0)).slice(0, 250)
+      : unknown;
+
+    return clusterSignals([...actionable, ...cappedUnknown]);
   }, [firmsData]);
 
   // Client-side diff and alarm trigger for changes
@@ -907,11 +920,7 @@ export default function IntelligenceMapPage({
 
     // 2. Render Thermal Anomaly Markers
     if (layers.thermal) {
-      // Performance guard: Cap rendered DOM markers at 180 to guarantee 60 FPS
-      const MAX_RENDERED_MARKERS = 180;
-      const markersToRender = visibleSignals.slice(0, MAX_RENDERED_MARKERS);
-
-      markersToRender.forEach((signal) => {
+      visibleSignals.forEach((signal) => {
         const lat = Number(signal.latitude);
         const lng = Number(signal.longitude);
         if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
@@ -1059,7 +1068,7 @@ export default function IntelligenceMapPage({
       <div className="kpi-strip">
         <div>
           <span>VISIBLE SIGNALS</span>
-          <b>{visibleSignals.length > 180 ? `${visibleSignals.length} (${180} on map)` : visibleSignals.length}</b>
+          <b>{visibleSignals.length}</b>
         </div>
         <div>
           <span>INDUSTRIAL ANOMALIES</span>
